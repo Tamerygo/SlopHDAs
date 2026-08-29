@@ -1,3 +1,4 @@
 *.hda   binary
 *.hdanc binary
 *.hdalc binary
+*.py    text eol=lf
