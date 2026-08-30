@@ -33,7 +33,10 @@ and gains the queue: many agents, one press.
 
 CONFIGURE
 ---------
-Only `OUTPUT_DIR` has to be right. Everything else has a working default.
+Nothing, in the normal case. Both settings that used to need an absolute path —
+where the files go and how the platform is run — are discovered from the
+platform's own `workspace/exports/platform.json`, which it writes at every
+start. Set them at the top of this file only to override that.
 """
 import json
 import os
@@ -45,19 +48,20 @@ import hou
 # --------------------------------------------------------------------------
 # CONFIGURATION
 # --------------------------------------------------------------------------
-# Where the FBX files are written. Point this at YOUR installation.
+# Where the FBX files are written.
 #
-# The default is `workspace\exports`, which the platform does **not** index —
-# deliberately. A two-hundred-agent crowd is two hundred FBX files, and under
-# `workspace\outputs` every one of them becomes a card in the Library and
-# buries the renders you actually made. Files here reach Unreal through
-# SEND_COMMAND below.
+# Leave it EMPTY and the script finds the platform's own export folder: it sits
+# beside this script when the platform installed it, and the platform writes a
+# `platform.json` inside it at every start. That folder is deliberately NOT the
+# Library's — a two-hundred-agent crowd is two hundred FBX files, and under
+# `workspace\outputs` every one of them becomes a card and buries the renders
+# you actually made. Files here reach Unreal through SEND_COMMAND below.
 #
-# If you would rather have them in the Library — reasonable for a single
-# character, so you can queue it by hand — point this at
+# Set it only to override that. Pointing it at
 #   <install folder>\pro\workspace\outputs\Houdini_Exports
-# instead, and leave SEND_COMMAND empty.
-OUTPUT_DIR = r"D:\AI_SLOP_MANAGER\AI_SLOP_PRO\3D_ASSET_EDITION\pro\workspace\exports\Houdini"
+# puts the exports in the Library instead, which is reasonable for a single
+# character you want to queue by hand.
+OUTPUT_DIR = ""
 
 # Which animation clip to bake. "" means: use the first clip the agent offers,
 # and say which one that was. Set it explicitly (e.g. "Dance") to pin it.
@@ -208,6 +212,46 @@ def _frame_range():
 def _safe_name(text):
     keep = "".join(ch if (ch.isalnum() or ch in "-_") else "_" for ch in str(text))
     return keep.strip("_") or "agent"
+
+
+def _resolve_output_dir():
+    """The platform's export folder, found rather than typed.
+
+    An absolute path written into a script works on the machine of whoever
+    typed it and nowhere else. This one is discovered: the platform installs
+    this script into its own `workspace/hda`, and writes `platform.json` into
+    `workspace/exports` every time it starts — so walking up from where this
+    file sits finds both the folder and the way to run the platform.
+
+    Returns "" when it cannot be found, and the caller says so rather than
+    inventing a directory on somebody's D: drive.
+    """
+    if OUTPUT_DIR:
+        return OUTPUT_DIR
+    starts = []
+    try:
+        starts.append(os.path.dirname(os.path.abspath(__file__)))
+    except Exception:
+        pass
+    try:
+        current = hou.hipFile.path()
+        if current:
+            starts.append(os.path.dirname(os.path.abspath(current)))
+    except Exception:
+        pass
+    for start in starts:
+        folder = start
+        for _ in range(8):
+            candidate = os.path.join(folder, "exports")
+            if os.path.isfile(os.path.join(candidate, "platform.json")):
+                found = os.path.join(candidate, "Houdini")
+                _log("export folder found beside the platform: {}".format(found))
+                return found
+            parent = os.path.dirname(folder)
+            if parent == folder:
+                break
+            folder = parent
+    return ""
 
 
 def _agent_labels(geometry):
@@ -449,6 +493,15 @@ def export_agents():
               .format(source_node.name()), error=True)
         return []
 
+    global OUTPUT_DIR
+    OUTPUT_DIR = _resolve_output_dir()
+    if not OUTPUT_DIR:
+        _tell("I could not find the platform's export folder from here, and "
+              "OUTPUT_DIR at the top of this script is empty.\n\n"
+              "Start the platform once — it writes workspace\\exports\\platform.json "
+              "at every start — or set OUTPUT_DIR yourself to the folder you "
+              "want the FBX files written to.", error=True, copyable=True)
+        return []
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     labels = _agent_labels(geometry)
     indices = list(range(count)) if EXPORT_ALL_AGENTS else [0]
